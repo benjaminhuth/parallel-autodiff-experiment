@@ -2,7 +2,7 @@
 #include <Eigen/Core>
 #include <autodiff/forward.hpp>
 #include <autodiff/forward/eigen.hpp>
-#include "autodiff_tuple.hpp"
+#include "grad_array.hpp"
 
 /******************************************************
  * 
@@ -29,7 +29,7 @@
 //                                    1-dim value      2-dim grad, this type has all necessary overloads
 //                                         |            |
 //                                         V            V
-using my_dual2 = autodiff::forward::Dual<double, autodiff_tuple<2>>;
+using my_dual2 = autodiff::forward::Dual<double, grad_array<2>>;
 
 using MyVector2 = Eigen::Matrix<my_dual2, 2, 1>;
 
@@ -38,8 +38,8 @@ template<typename Func>
 auto my_jacobian(Func &f, MyVector2 &in)
 {
     // set elements in grad to 0 bzw. 1
-    in(0).grad.set_to_one<0>();
-    in(1).grad.set_to_one<1>();
+    in(0).grad.set_to_one_all_others_zero<0>();
+    in(1).grad.set_to_one_all_others_zero<1>();
     
     // compute function
     MyVector2 F = f(in);
