@@ -1,6 +1,7 @@
 #include <iostream>
 #include <Eigen/Core>
 #include <autodiff/forward.hpp>
+#include <autodiff/forward/eigen.hpp>
 
 /******************************************************
  * 
@@ -22,46 +23,78 @@
  * 
  ******************************************************/
 
-
-
-//                                    1-dim value      2-dim grad, this type has all necessary overloads
-//                                         |            |
-//                                         V            V
-using my_dual2 = autodiff::forward::Dual<double, Eigen::Array2d>;
-
-using MyVector2 = Eigen::Matrix<my_dual2, 2, 1>;
-
-// This function could be made generic with template arguments and constexpr for loop
-template<typename Func>
-auto my_jacobian(Func &f, MyVector2 &in)
+template<int I, int I_end, typename Body>
+void constexpr_for(const Body &loop_body)
 {
-    // set elements in grad to 0 bzw. 1
-    in(0).grad = { 0,1 };
-    in(1).grad = { 1,0 };
-    
-    // compute function
-    MyVector2 F = f(in);
-    
-    Eigen::Matrix2d jac;
-    
-    // Read out values
-    jac(0,0) = F(0).grad(0);
-    jac(0,1) = F(0).grad(1);
-    jac(1,0) = F(1).grad(0);
-    jac(1,1) = F(1).grad(1);
-    
-    return jac;
+    static_assert(std::is_same<decltype(loop_body(0)), void>::value, "Loop body function not valid");
+    loop_body(I);
+    if constexpr( I < I_end-1 )
+        constexpr_for<I+1, I_end>(loop_body);
 }
 
-int main() 
+template<int Size>
+constexpr auto initial_grad(std::size_t pos_of_one)
 {
-    auto f = [](MyVector2 &x) { return MyVector2{ x[0]*x[1], 2*x[0]*x[1] }; };
+    Eigen::Array<double, Size, 1> array(0.0);
+    array[pos_of_one] = 1.0;
+    return array;
+}
+
+template<typename Func_t, typename Input_t>
+constexpr auto jacobian(Func_t &f, Input_t &in)
+{
+    using Result_t = decltype(f(in));
+    using Gradient_t = decltype(Input_t::value_type::grad);
     
-    std::cout << "f(x,y) = { xy, 2xy }\n" << std::endl;
+    static_assert( 
+        std::is_same<Gradient_t, typename Gradient_t::PlainArray>::value,
+        "Autodiff gradient type must be an Eigen::Array type"
+    );
+    static_assert(
+        Gradient_t::ColsAtCompileTime == 1 && 
+        static_cast<int>(Gradient_t::RowsAtCompileTime) == static_cast<int>(Input_t::RowsAtCompileTime),
+        "Autodiff gradient type must be a fixed-size 1d array with the same size as the output type"
+    );
+    static_assert(
+        Input_t::ColsAtCompileTime == 1 && Input_t::RowsAtCompileTime != Eigen::Dynamic,
+        "Input type must be a fixed-size column vector"
+    );
+    static_assert(
+        Result_t::ColsAtCompileTime == 1 && Result_t::RowsAtCompileTime != Eigen::Dynamic,
+        "Output type must be a fixed-size column vector"
+    );
     
-    MyVector2 in;
-    in(0) = 5.0;
-    in(1) = 2.0;
+    using Jac_t = Eigen::Matrix<double, Result_t::RowsAtCompileTime, Input_t::RowsAtCompileTime>;
     
-    std::cout << "j at (" << in(0) << ", " << in(1) << ") = \n" << my_jacobian(f, in) << std::endl;
+    constexpr_for<0, Input_t::RowsAtCompileTime>([&](auto i){
+        in(i).grad = initial_grad<Input_t::RowsAtCompileTime>(i);
+    });
+    
+    auto out = f(in);
+    Jac_t jac;
+        
+    constexpr_for<0, Input_t::RowsAtCompileTime>([&](auto i){
+        jac.row(i) = out(i).grad;
+    });
+    
+    return jac;       
+}
+
+int main(int argc, char ** argv) 
+{
+    constexpr int N = 4;
+    using Dual = autodiff::forward::Dual<double, Eigen::Array<double, N, 1>>;
+    using DualVector = Eigen::Matrix<Dual, N, 1>;
+    
+    auto f = [](DualVector &x) { return x.dot(x) * x; };
+    
+    DualVector in;
+    
+    double val = argc+1;
+    for(std::size_t i=0; i<N; ++i)
+        in(i) = val*val + i*val;
+    
+    auto j = jacobian(f, in);
+    
+    std::cout << "j = \n" << j << std::endl;
 }
