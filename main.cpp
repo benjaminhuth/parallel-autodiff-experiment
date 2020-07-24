@@ -3,6 +3,12 @@
 #include <autodiff/forward.hpp>
 #include <autodiff/forward/eigen.hpp>
 
+#ifndef JACOBIAN_SIZE
+#define JACOBIAN_SIZE 8
+#endif
+
+#include <chrono>
+
 /******************************************************
  * 
  * 
@@ -80,21 +86,83 @@ constexpr auto jacobian(Func_t &f, Input_t &in)
     return jac;       
 }
 
-int main(int argc, char ** argv) 
+template<typename JacobianComputeFunc, typename Jacobian>
+auto benchmark(JacobianComputeFunc &f, Jacobian &j, bool dummy_bool, int iterations)
 {
-    constexpr int N = 4;
-    using Dual = autodiff::forward::Dual<double, Eigen::Array<double, N, 1>>;
-    using DualVector = Eigen::Matrix<Dual, N, 1>;
+    auto t0 = std::chrono::high_resolution_clock::now();
     
-    auto f = [](DualVector &x) { return x.dot(x) * x; };
+    for(std::size_t i=0; i<iterations; ++i)
+    {
+        j=f();
+        // asm no-op to prevent optimization
+        __asm__ __volatile__ ("" : : : "memory");
+    }
     
-    DualVector in;
+    auto t1 = std::chrono::high_resolution_clock::now();
     
+    return std::chrono::duration<double>(t1 - t0)/* / iterations*/;
+}
+
+#ifndef JACOBIAN_SIZE
+#define JACOBIAN_SIZE 8
+#endif
+
+int main(int argc, char ** argv) 
+{    
+    constexpr int N = JACOBIAN_SIZE;
+    
+    // the function
+    auto f = [](const auto &x){ return typename std::remove_reference<decltype(x)>::type{ x.dot(x) * x }; };
+    
+    // init x vector
+    Eigen::Matrix<double, N, 1> in;
     double val = argc+1;
-    for(std::size_t i=0; i<N; ++i)
+    for(std::size_t i=0; i<in.size(); ++i)
         in(i) = val*val + i*val;
     
-    auto j = jacobian(f, in);
+    // normal routine
+    auto jacobian_normal = [&]()
+    {
+        Eigen::Matrix<autodiff::dual, N, 1> x;
+        for(std::size_t i=0; i<in.size(); ++i)
+            x(i) = in(i);
+        
+        return autodiff::forward::jacobian(f, wrt(x), at(x));        
+    };
     
-    std::cout << "j = \n" << j << std::endl;
+    // new routine
+    auto jacobian_new = [&]()
+    {
+        using Dual = autodiff::forward::Dual<double, Eigen::Array<double, N, 1>>;
+        
+        Eigen::Matrix<Dual, N, 1> x;
+        for(std::size_t i=0; i<in.size(); ++i)
+            x(i) = in(i);
+        
+        return jacobian(f, x);        
+    };
+    
+    Eigen::Matrix<double, N, N> jac_normal, jac_new;
+    
+    // benchmark
+    bool dummy_bool = argc>100;
+    int iterations = 100;
+    if( argc >= 2 )
+        iterations = std::atoi(argv[1]);
+    
+    double normal_us = benchmark(jacobian_normal, jac_normal, dummy_bool, iterations).count()*1.e6;
+    double new_us = benchmark(jacobian_new, jac_new, dummy_bool, iterations).count()*1.e6;
+    
+    if( argc == 3 && std::string(argv[2]) == "--csv" )
+        std::cout << normal_us << ", " << new_us << ", " << normal_us/new_us << std::endl;
+    else
+    {    
+        std::cout << "jacobian size = " << N << "x" << N << std::endl;
+        std::cout << "normal method: " << normal_us << " us" << std::endl;
+        std::cout << "NEW method:    " << new_us << " us" << std::endl;
+        std::cout << "speedup:      x" << normal_us/new_us << std::endl;
+    }
+    
+    if( (jac_normal - jac_new).norm() > 1.e-3 )
+        throw std::runtime_error("validation error!");
 }
