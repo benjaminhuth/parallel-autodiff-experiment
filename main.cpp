@@ -1,12 +1,8 @@
 #include <iostream>
 #include <Eigen/Core>
+#include <cstdlib>
 #include <autodiff/forward.hpp>
 #include <autodiff/forward/eigen.hpp>
-
-#ifndef JACOBIAN_SIZE
-#define JACOBIAN_SIZE 8
-#endif
-
 #include <chrono>
 
 /******************************************************
@@ -95,6 +91,8 @@ constexpr int N = JACOBIAN_SIZE;
 template<typename JacFunc, typename GenFunc, typename Jacobian>
 auto benchmark(JacFunc &f, GenFunc &g, Jacobian &j, int iterations, bool use_data_vector)
 {
+    std::srand(iterations);
+
     using vec_t = Eigen::Matrix<double,N,1>;
     using vecAD_t = decltype(g(vec_t()));
     
@@ -216,6 +214,6 @@ int main(int argc, char ** argv)
         std::cout << "speedup:      x" << normal_us/new_us << std::endl;
     }
     
-    if( !use_multi_data && (jac_normal - jac_new).norm() > 1.e-3 )
+    if ( (jac_normal - jac_new).norm() > 1.e-3 )
         throw std::runtime_error("validation error!");
 }
