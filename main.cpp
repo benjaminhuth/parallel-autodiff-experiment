@@ -1,10 +1,3 @@
-#include <iostream>
-#include <Eigen/Core>
-#include <cstdlib>
-#include <autodiff/forward.hpp>
-#include <autodiff/forward/eigen.hpp>
-#include <chrono>
-
 /******************************************************
  * 
  * 
@@ -25,120 +18,77 @@
  * 
  ******************************************************/
 
-template<int I, int I_end, typename Body>
-void constexpr_for(const Body &loop_body)
-{
-    static_assert(std::is_same<decltype(loop_body(0)), void>::value, "Loop body function not valid");
-    loop_body(I);
-    if constexpr( I < I_end-1 )
-        constexpr_for<I+1, I_end>(loop_body);
-}
+#include <iostream>
+#include <cstdlib>
+#include <chrono>
 
-template<int Size>
-constexpr auto initial_grad(std::size_t pos_of_one)
-{
-    Eigen::Array<double, Size, 1> array(0.0);
-    array[pos_of_one] = 1.0;
-    return array;
-}
-
-template<typename Func_t, typename Input_t>
-constexpr auto jacobian(Func_t &f, Input_t &in)
-{
-    using Result_t = decltype(f(in));
-    using Gradient_t = decltype(Input_t::value_type::grad);
-    
-    static_assert( 
-        std::is_same<Gradient_t, typename Gradient_t::PlainArray>::value,
-        "Autodiff gradient type must be an Eigen::Array type"
-    );
-    static_assert(
-        Gradient_t::ColsAtCompileTime == 1 && 
-        static_cast<int>(Gradient_t::RowsAtCompileTime) == static_cast<int>(Input_t::RowsAtCompileTime),
-        "Autodiff gradient type must be a fixed-size 1d array with the same size as the output type"
-    );
-    static_assert(
-        Input_t::ColsAtCompileTime == 1 && Input_t::RowsAtCompileTime != Eigen::Dynamic,
-        "Input type must be a fixed-size column vector"
-    );
-    static_assert(
-        Result_t::ColsAtCompileTime == 1 && Result_t::RowsAtCompileTime != Eigen::Dynamic,
-        "Output type must be a fixed-size column vector"
-    );
-    
-    using Jac_t = Eigen::Matrix<double, Result_t::RowsAtCompileTime, Input_t::RowsAtCompileTime>;
-    
-    constexpr_for<0, Input_t::RowsAtCompileTime>([&](auto i){
-        in(i).grad = initial_grad<Input_t::RowsAtCompileTime>(i);
-    });
-    
-    auto out = f(in);
-    Jac_t jac;
-        
-    constexpr_for<0, Input_t::RowsAtCompileTime>([&](auto i){
-        jac.row(i) = out(i).grad;
-    });
-    
-    return jac;       
-}
-
+#include "jacobian.hpp"
 
 #ifndef JACOBIAN_SIZE
-#define JACOBIAN_SIZE 8
+#define JACOBIAN_SIZE 4
 #endif
+
+#if ( defined(__SSE__) && JACOBIAN_SIZE == 2 ) || \
+    ( defined(__AVX2__) && (JACOBIAN_SIZE == 2 || JACOBIAN_SIZE == 4) ) || \
+    ( defined(__AVX512F__) && (JACOBIAN_SIZE == 2 || JACOBIAN_SIZE == 4 || JACOBIAN_SIZE == 8) )
+#define USE_XSIMD
+#endif
+
 constexpr int N = JACOBIAN_SIZE;
 
-template<typename JacFunc, typename GenFunc, typename Jacobian>
-auto benchmark(JacFunc &f, GenFunc &g, Jacobian &j, int iterations, bool use_data_vector)
+using Jac_t = Eigen::Matrix<double, N, N, Eigen::RowMajor>;
+using Vec_t = Eigen::Matrix<double, N, 1>;
+
+
+// Benchmark without single data
+template<optimization opt, typename Func_t>
+auto benchmark(const Func_t &f, Jac_t &j, std::size_t iterations)
 {
     std::srand(iterations);
-
-    using vec_t = Eigen::Matrix<double,N,1>;
-    using vecAD_t = decltype(g(vec_t()));
     
-    std::chrono::high_resolution_clock::time_point t0, t1;
-    
-    if( use_data_vector )
+    const auto x = Vec_t::Random();
+        
+    auto t0 = std::chrono::high_resolution_clock::now();
+        
+    for(auto i=0ul; i<iterations; ++i)
     {
-        std::vector<vec_t> data(iterations);
-        std::vector<vecAD_t> xs(iterations);
-        std::generate(data.begin(),data.end(),[](){ return vec_t::Random(); }); 
-        std::transform(data.begin(),data.end(),xs.begin(),[&](const auto &a){ return g(a); });
-        
-        t0 = std::chrono::high_resolution_clock::now();
-        
-        for(std::size_t i=0; i<iterations; ++i)
-            j=f(xs[i]);
-        
-        t1 = std::chrono::high_resolution_clock::now();
+        j = jacobian<opt, Func_t, N>(f, x);
+        asm volatile("" ::: "memory");
     }
-    else
-    {
-        vec_t vec;
-        for(std::size_t i=0; i<vec.size(); ++i)
-            vec(i) = std::log(iterations)*i;
-        auto x = g(vec);
         
-        t0 = std::chrono::high_resolution_clock::now();
-        
-        for(std::size_t i=0; i<iterations; ++i)
-        {
-            j=f(x);
-            asm volatile("" ::: "memory");
-        }
-        
-        t1 = std::chrono::high_resolution_clock::now();
-    }
+    auto t1 = std::chrono::high_resolution_clock::now();
     
     return std::chrono::duration<double>(t1 - t0);
 }
 
+// Benchmark with multiple data
+template<optimization opt, typename Func_t>
+auto benchmark(const Func_t &f, std::vector<Jac_t> &js, std::size_t iterations)
+{
+    std::srand(iterations);
+    
+    std::vector<Vec_t> x(iterations);
+    std::generate(x.begin(),x.end(),[](){ return Vec_t::Random(); }); 
+        
+    auto t0 = std::chrono::high_resolution_clock::now();
+        
+    for(auto i=0ul; i<iterations; ++i)
+    {
+        js[i] = jacobian<opt, Func_t, N>(f, x[i]);
+        asm volatile("" ::: "memory");
+    }
+        
+    auto t1 = std::chrono::high_resolution_clock::now();
+    
+    return std::chrono::duration<double>(t1 - t0);
+}
+
+
 int main(int argc, char ** argv) 
 {    
-    
     std::vector<std::string> args(argv, argv+argc);
     
-    // help
+    // Help
     if( std::any_of(args.begin(), args.end(), [](const auto &arg){ return arg == "-h" || arg == "--help"; }) )
     {
         std::cout << "Usage: " << argv[0] << " <iterations> <options>\n\n";
@@ -149,71 +99,79 @@ int main(int argc, char ** argv)
         return 0;
     }
     
-    // iterations
-    int iterations = 100;
+    // Iterations
+    std::size_t iterations = 100;
     if( argc >= 2 )
         iterations = std::atoi(argv[1]);
     
-    // the function
-    auto f = [](const auto &x){ return typename std::remove_reference<decltype(x)>::type{ x.dot(x) * x }; };
+    const Jac_t rand_mat1 = Jac_t::Random();
+    const Jac_t rand_mat2 = Jac_t::Random();
     
-    // init x vector
-    Eigen::Matrix<double, N, 1> in;
-    double val = argc+1;
-    for(std::size_t i=0; i<in.size(); ++i)
-        in(i) = val*val + i*val;
-    
-    // normal routine
-    auto gen_normal = [](const auto &in)
-    {
-        Eigen::Matrix<autodiff::dual, N, 1> x;
-        for(std::size_t i=0; i<in.size(); ++i)
-            x(i) = in(i);
-        
-        return x;
-    };
-    
-    auto comp_normal = [&f](auto &x)
-    {
-        using namespace autodiff::forward;
-        return jacobian(f, wrt(x), at(x));        
-    };
-    
-    // new routine
-    auto gen_new = [](const auto &in)
-    {
-        using Dual = autodiff::forward::Dual<double, Eigen::Array<double, N, 1>>;
-        
-        Eigen::Matrix<Dual, N, 1> x;
-        for(std::size_t i=0; i<in.size(); ++i)
-            x(i) = in(i);
-        
-        return x;
-    };
-    auto comp_new = [&f](auto &x)
-    {        
-        return jacobian(f, x);        
+    // The function
+    auto f = [&](const auto &x)
+    { 
+        using namespace std;
+        using namespace xsimd;
+        return typename std::remove_reference<decltype(x)>::type( (rand_mat1*x).array() * (rand_mat2*x).array() ); 
     };
     
     // Do actual benchmark
-    Eigen::Matrix<double, N, N> jac_normal, jac_new;
-    bool use_multi_data = std::any_of(args.begin(), args.end(), [](const auto &arg){ return arg == "--multi-data"; });
+    Jac_t jac_normal, jac_eigen, jac_xsimd;
+    std::vector<Jac_t> jacs_normal(iterations), jacs_eigen(iterations), jacs_xsimd(iterations);
     
-    double normal_us = benchmark(comp_normal, gen_normal, jac_normal, iterations, use_multi_data).count()*1.e6;
-    double new_us = benchmark(comp_new, gen_new, jac_new, iterations, use_multi_data).count()*1.e6;
+    const bool use_multi_data = std::any_of(args.begin(), args.end(), [](const auto &arg){ return arg == "--multi-data"; });
+    
+    double normal_us = 0.0, eigen_us = 0.0, xsimd_us = 0.0;
+    
+    if( use_multi_data )
+    {
+        normal_us = benchmark<optimization::none>(f, jacs_normal, iterations).count()*1.e6;
+        eigen_us = benchmark<optimization::eigen>(f, jacs_eigen, iterations).count()*1.e6;
+#ifdef USE_XSIMD
+        xsimd_us = benchmark<optimization::xsimd>(f, jacs_xsimd, iterations).count()*1.e6;
+#endif
+        
+        jac_normal = jacs_normal[0];
+        jac_eigen = jacs_eigen[0];
+        jac_xsimd = jacs_xsimd[0];
+    }
+    else
+    {
+        normal_us = benchmark<optimization::none>(f, jac_normal, iterations).count()*1.e6;
+        eigen_us = benchmark<optimization::eigen>(f, jac_eigen, iterations).count()*1.e6;
+#ifdef USE_XSIMD
+        xsimd_us = benchmark<optimization::xsimd>(f, jac_xsimd, iterations).count()*1.e6;
+#endif
+    }
     
     if( std::any_of(args.begin(), args.end(), [](const auto &arg){ return arg == "--csv"; }) )
     {
-        std::cout << normal_us << ", " << new_us << ", " << normal_us/new_us << std::endl;
+        std::cout << normal_us << ", " 
+                  << eigen_us << ", " << normal_us/eigen_us << ", " 
+                  << xsimd_us << ", " << normal_us/xsimd_us << std::endl;
     }
     else
     {    
         std::cout << "jacobian size = " << N << "x" << N << std::endl;
-        std::cout << "normal method: " << normal_us << " us" << std::endl;
-        std::cout << "NEW method:    " << new_us << " us" << std::endl;
-        std::cout << "speedup:      x" << normal_us/new_us << std::endl;
+        std::cout << "no optimization:    " << normal_us << " us" << std::endl;
+        std::cout << "eigen optimization: " << eigen_us << " us   (speedup: " << normal_us/eigen_us << ")" << std::endl;
+#ifdef USE_XSIMD
+        std::cout << "xsimd optimization: " << xsimd_us << " us   (speedup: " << normal_us/xsimd_us << ")" << std::endl;
+#endif
     }
     
-    if ( (jac_normal - jac_new).norm() > 1.e-3 )
+    if ( 
+        (jac_normal - jac_eigen).norm() > 1.e-3 
+#ifdef USE_XSIMD
+        || (jac_normal - jac_xsimd ).norm() > 1.e-3 
+#endif
+    )
+    {
+        std::cout << "J_normal = \n" << jac_normal << std::endl;
+        std::cout << "J_eigen = \n" << jac_eigen << std::endl;
+#ifdef USE_XSIMD
+        std::cout << "J_xsimd = \n" << jac_xsimd << std::endl;
+#endif
         throw std::runtime_error("validation error!");
+    }
 }
