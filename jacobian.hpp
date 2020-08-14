@@ -2,7 +2,21 @@
 #define JACOBIAN_HPP_INCLUDED
 
 #include <Eigen/Dense>
+
+// Workaround to enable AVX512 on clang for xsimd
+#ifdef __clang__
+    #define OLD_GNUC __GNUC__
+    #undef __GNUC__
+    #define __GNUC__ 7
+#endif
+
 #include <xsimd/xsimd.hpp>
+
+#ifdef __clang__
+    #undef __GNUC__
+    #define __GNUC__ OLD_GNUC
+    #undef OLD_GNUC
+#endif
 
 #include <autodiff/forward.hpp>
 #include <autodiff/forward/eigen.hpp>

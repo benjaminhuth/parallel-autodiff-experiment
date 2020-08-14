@@ -28,9 +28,9 @@
 #define JACOBIAN_SIZE 4
 #endif
 
-#if ( defined(__SSE__) && JACOBIAN_SIZE == 2 ) || \
-    ( defined(__AVX2__) && (JACOBIAN_SIZE == 2 || JACOBIAN_SIZE == 4) ) || \
-    ( defined(__AVX512F__) && (JACOBIAN_SIZE == 2 || JACOBIAN_SIZE == 4 || JACOBIAN_SIZE == 8) )
+#if ( defined(__SSE__)     && JACOBIAN_SIZE == 2 ) || \
+    ( defined(__AVX2__)    && JACOBIAN_SIZE == 4 ) || \
+    ( defined(__AVX512F__) && JACOBIAN_SIZE == 8 )
 #define USE_XSIMD
 #endif
 
@@ -85,7 +85,7 @@ auto benchmark(const Func_t &f, std::vector<Jac_t> &js, std::size_t iterations)
 
 
 int main(int argc, char ** argv) 
-{    
+{
     std::vector<std::string> args(argv, argv+argc);
     
     // Help
@@ -151,7 +151,8 @@ int main(int argc, char ** argv)
                   << xsimd_us << ", " << normal_us/xsimd_us << std::endl;
     }
     else
-    {    
+    {
+        std::cout << "INFO: max xsimd::batch<double> size: " << xsimd::simd_traits<double>::size << std::endl;   
         std::cout << "jacobian size = " << N << "x" << N << std::endl;
         std::cout << "no optimization:    " << normal_us << " us" << std::endl;
         std::cout << "eigen optimization: " << eigen_us << " us   (speedup: " << normal_us/eigen_us << ")" << std::endl;
