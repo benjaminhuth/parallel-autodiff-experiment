@@ -28,10 +28,16 @@
 #define JACOBIAN_SIZE 4
 #endif
 
+// Determine if XSIMD can be used
 #if ( defined(__SSE__)     && JACOBIAN_SIZE == 2 ) || \
     ( defined(__AVX2__)    && JACOBIAN_SIZE == 4 ) || \
     ( defined(__AVX512F__) && JACOBIAN_SIZE == 8 )
 #define USE_XSIMD
+#endif
+   
+// XSIMD can be disabled by NO_XSIMD
+#if defined(USE_XSIMD) && defined(NO_XSIMD)
+#undef USE_XSIMD
 #endif
 
 constexpr int N = JACOBIAN_SIZE;
@@ -100,7 +106,7 @@ int main(int argc, char ** argv)
     }
     
     // Iterations
-    std::size_t iterations = 100;
+    std::size_t iterations = 1000;
     if( argc >= 2 )
         iterations = std::atoi(argv[1]);
     
@@ -125,8 +131,12 @@ int main(int argc, char ** argv)
     
     if( use_multi_data )
     {
+#ifndef NO_NORMAL
         normal_us = benchmark<optimization::none>(f, jacs_normal, iterations).count()*1.e6;
+#endif
+#ifndef NO_EIGEN
         eigen_us = benchmark<optimization::eigen>(f, jacs_eigen, iterations).count()*1.e6;
+#endif
 #ifdef USE_XSIMD
         xsimd_us = benchmark<optimization::xsimd>(f, jacs_xsimd, iterations).count()*1.e6;
 #endif
@@ -137,8 +147,12 @@ int main(int argc, char ** argv)
     }
     else
     {
+#ifndef NO_NORMAL
         normal_us = benchmark<optimization::none>(f, jac_normal, iterations).count()*1.e6;
+#endif
+#ifndef NO_EIGEN
         eigen_us = benchmark<optimization::eigen>(f, jac_eigen, iterations).count()*1.e6;
+#endif
 #ifdef USE_XSIMD
         xsimd_us = benchmark<optimization::xsimd>(f, jac_xsimd, iterations).count()*1.e6;
 #endif
@@ -153,14 +167,19 @@ int main(int argc, char ** argv)
     else
     {
         std::cout << "INFO: max xsimd::batch<double> size: " << xsimd::simd_traits<double>::size << std::endl;   
-        std::cout << "jacobian size = " << N << "x" << N << std::endl;
+        std::cout << "INFO: jacobian size = " << N << "x" << N << std::endl;
+#ifndef NO_NORMAL
         std::cout << "no optimization:    " << normal_us << " us" << std::endl;
+#endif
+#ifndef NO_EIGEN
         std::cout << "eigen optimization: " << eigen_us << " us   (speedup: " << normal_us/eigen_us << ")" << std::endl;
+#endif
 #ifdef USE_XSIMD
         std::cout << "xsimd optimization: " << xsimd_us << " us   (speedup: " << normal_us/xsimd_us << ")" << std::endl;
 #endif
     }
     
+#if !defined(NO_NORMAL) && !defined(NO_EIGEN)
     if ( 
         (jac_normal - jac_eigen).norm() > 1.e-3 
 #ifdef USE_XSIMD
@@ -175,4 +194,5 @@ int main(int argc, char ** argv)
 #endif
         throw std::runtime_error("validation error!");
     }
+#endif
 }
