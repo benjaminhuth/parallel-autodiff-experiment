@@ -7,8 +7,8 @@ fi
 
 echo "size,iter,normal_us,eigen_us,eigen_speedup,xsimd_us,xsimd_speedup"
 
-for i in {1..32}; do
-    $1 -I dependencies/autodiff -std=c++17 main.cpp -D JACOBIAN_SIZE=$i
+for i in {1..16}; do
+    $1 -I dependencies -std=c++17 main.cpp -D JACOBIAN_SIZE=$i
     RES=$(./a.out $2 --csv $3)
-    echo "$i, $2, $RES"
+    echo "$i,$2,$RES"
 done

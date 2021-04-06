@@ -18,8 +18,8 @@
     #undef OLD_GNUC
 #endif
 
-#include <autodiff/forward.hpp>
-#include <autodiff/forward/eigen.hpp>
+#include "autodiff_modified/autodiff/forward/forward.hpp"
+#include "autodiff_modified/autodiff/forward/eigen.hpp"
 
 /// Gradient initialization
 template<std::size_t Size>

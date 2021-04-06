@@ -160,9 +160,9 @@ int main(int argc, char ** argv)
     
     if( std::any_of(args.begin(), args.end(), [](const auto &arg){ return arg == "--csv"; }) )
     {
-        std::cout << normal_us << ", " 
-                  << eigen_us << ", " << normal_us/eigen_us << ", " 
-                  << xsimd_us << ", " << normal_us/xsimd_us << std::endl;
+        std::cout << normal_us << "," 
+                  << eigen_us << "," << normal_us/eigen_us << "," 
+                  << xsimd_us << "," << normal_us/xsimd_us << std::endl;
     }
     else
     {

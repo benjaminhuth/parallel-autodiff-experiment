@@ -12,11 +12,10 @@ if( ${xsimd_FOUND} )
     message(STATUS "Found xsimd: ${xsimd_INCLUDE_DIRS}")
 endif()
 
-include_directories(${xsimd_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR})
-
 # Modified autodiff, to work with xsimd
-include_directories(${CMAKE_SOURCE_DIR}/dependencies/autodiff)
+include_directories(dependencies)
 
-add_executable(autodiff_jacobian_with_tuple main.cpp)
+add_executable(simd_autodiff_benchmark main.cpp)
 
-install(TARGETS autodiff_jacobian_with_tuple RUNTIME DESTINATION bin)
+target_link_libraries(simd_autodiff_benchmark Eigen3::Eigen)
+target_link_libraries(simd_autodiff_benchmark xsimd)
